@@ -1,0 +1,350 @@
+name: Deploy to Vercel (staging)
+
+on:
+  # pull_request:
+  #   branches:
+  #     - 'main'
+  #   paths:
+  #     - '.github/workflows/deploy-vercel-staging.yml'
+  #     - 'cypress/**'
+  #     - '!cypress/_examples/**'
+  #     - '!cypress/integration-storybook/**'
+  #     - '!cypress/config-*.json' # Exclude all config files
+  #     - 'cypress/config-customer-ci-cd.json' # Force include CI/CD config file
+  #     - 'public/**'
+  #     - 'scripts/populate-git-env.sh'
+  #     - 'src/**'
+  #     - '!src/stories/**'
+  #     - '.eslint*'
+  #     - '*.js*' # Includes all .js/.json at the root level
+  #     - '*.ts' # Includes all .ts at the root level
+  #     - '.*ignore' # Includes .gitignore and .vercelignore
+  #     - 'yarn.lock'
+  #     - '!**/*.md' # Exclude all markdown files
+  workflow_dispatch:
+    inputs:
+      customer:
+        description: 'Customer to deploy'
+        required: true
+
+env:
+  STAGE: staging
+
+jobs:
+  setup-environment:
+    name: Setup deployment environment (Ubuntu 18.04 - Node 16.x)
+    runs-on: ubuntu-18.04
+    steps:
+      - name: Installing node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '16.x'
+
+  start-staging-deployment:
+    name: Starts Vercel deployment (staging) (Ubuntu 18.04)
+    runs-on: ubuntu-18.04
+    needs: setup-environment
+    timeout-minutes: 40 
+    steps:
+      - uses: actions/checkout@v1
+
+      - name: Expose GitHub slug/short variables
+        uses: rlespinasse/github-slug-action@v3.x
+
+      - name: Resolve customer to deploy
+        run: |
+          MANUAL_TRIGGER_CUSTOMER="${{github.event.inputs.customer}}"
+          echo "MANUAL_TRIGGER_CUSTOMER: " $MANUAL_TRIGGER_CUSTOMER
+          echo "MANUAL_TRIGGER_CUSTOMER=$MANUAL_TRIGGER_CUSTOMER" >> $GITHUB_ENV
+
+          CUSTOMER_REF_TO_DEPLOY="${MANUAL_TRIGGER_CUSTOMER:-$(cat vercel.json | jq --raw-output '.build.env.NEXT_PUBLIC_CUSTOMER_REF')}"
+          echo "Customer to deploy: " $CUSTOMER_REF_TO_DEPLOY
+          echo "CUSTOMER_REF_TO_DEPLOY=$CUSTOMER_REF_TO_DEPLOY" >> $GITHUB_ENV
+
+          if [[ ${GIT_COMMIT_REF##*/} =~ ^v[0-9]{1,}- ]]; then # Checking if pattern matches with "vX-" where X is a number
+            BRANCH_ALIAS_DOMAIN=${CUSTOMER_REF_TO_DEPLOY}-${{ env.GITHUB_REF_SLUG }}
+          else
+            BRANCH_ALIAS_DOMAIN=$(cat vercel.$CUSTOMER_REF_TO_DEPLOY.staging.json | jq --raw-output '.name')-${{ env.GITHUB_REF_SLUG }}
+          fi
+          echo "Resolved branch domain alias: " $BRANCH_ALIAS_DOMAIN
+          echo "BRANCH_ALIAS_DOMAIN=$BRANCH_ALIAS_DOMAIN" >> $GITHUB_ENV
+
+      - name: Start GitHub deployment
+        uses: bobheadxi/deployments@v0.4.3
+        id: start-github-deployment
+        with:
+          step: start
+          token: ${{ secrets.GITHUB_TOKEN }}
+          env: ${{ env.CUSTOMER_REF_TO_DEPLOY }}-${{ env.STAGE }}
+          no_override: true
+
+      - name: Deploying on Vercel (${{ env.STAGE }})
+        uses: UnlyEd/github-action-deploy-on-vercel@94d41ec1ff9b5b1de5256312e385632b6fcd8fa4 # Pin "v1.2.1" - See https://github.com/UnlyEd/github-action-deploy-on-vercel/commit/94d41ec1ff9b5b1de5256312e385632b6fcd8fa4
+        with:
+          command: "yarn deploy:ci:gha --token ${{ secrets.VERCEL_TOKEN }}"
+          extraAliases: >-
+            ${{ env.BRANCH_ALIAS_DOMAIN }}.vercel.app
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          GIT_COMMIT_REF: ${{ github.ref }}
+          GIT_COMMIT_SHA: ${{ github.ref }}
+          CUSTOMER_REF: ${{ env.CUSTOMER_REF_TO_DEPLOY }}
+
+      - name: Link GitHub deployment to Vercel
+        uses: bobheadxi/deployments@v0.4.3
+        id: link-github-deployment-to-vercel
+        if: always()
+        with:
+          step: finish
+          token: ${{ secrets.GITHUB_TOKEN }}
+          status: ${{ job.status }}
+          deployment_id: ${{ steps.start-github-deployment.outputs.deployment_id }}
+          env_url: ${{ env.VERCEL_DEPLOYMENT_URL }}
+
+      - name: Finding Pull Request ID
+        uses: jwalton/gh-find-current-pr@v1
+        id: pr_id_finder
+        if: always()
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment PR (Deployment failure)
+        uses: peter-evans/create-or-update-comment@v1 # See https://github.com/peter-evans/create-or-update-comment
+        if: steps.pr_id_finder.outputs.number && failure()
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ steps.pr_id_finder.outputs.number }}
+          body: |
+            :x:&nbsp; Deployment **FAILED**
+            Commit ${{ github.sha }} failed to deploy to [${{ env.VERCEL_DEPLOYMENT_URL }}](${{ env.VERCEL_DEPLOYMENT_URL }})
+            [click to see logs](https://github.com/UnlyEd/next-right-now/pull/${{ steps.pr_id_finder.outputs.number }}/checks)
+
+      - name: Comment PR (Deployment success)
+        uses: peter-evans/create-or-update-comment@v1 # See https://github.com/peter-evans/create-or-update-comment
+        if: steps.pr_id_finder.outputs.number && success()
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ steps.pr_id_finder.outputs.number }}
+          body: |
+            :white_check_mark:&nbsp; Deployment **SUCCESS**
+            Commit ${{ github.sha }} successfully deployed **Next.js app** :rocket: to [${{ env.VERCEL_DEPLOYMENT_URL }}](${{ env.VERCEL_DEPLOYMENT_URL }})
+            Deployment aliases (${{ env.VERCEL_ALIASES_CREATED_COUNT }}): ${{ env.VERCEL_ALIASES_CREATED_URLS_MD }}
+
+      - name: Store variables for next jobs
+        uses: UnlyEd/github-action-store-variable@v2.1.1 # See https://github.com/UnlyEd/github-action-store-variable
+        with:
+          variables: |
+            CUSTOMER_REF_TO_DEPLOY=${{ env.CUSTOMER_REF_TO_DEPLOY }}
+            VERCEL_DEPLOYMENT_URL=${{ env.VERCEL_DEPLOYMENT_URL }}
+            VERCEL_DEPLOYMENT_DOMAIN=${{ env.VERCEL_DEPLOYMENT_DOMAIN }}
+            MANUAL_TRIGGER_CUSTOMER=${{ env.MANUAL_TRIGGER_CUSTOMER }}
+            GITHUB_PULL_REQUEST_ID=${{ steps.pr_id_finder.outputs.number }}
+
+  await-for-vercel-deployment:
+    name: Await current deployment to be ready (Ubuntu 18.04)
+    runs-on: ubuntu-18.04
+    needs: start-staging-deployment
+    timeout-minutes: 5 # Limit current job timeout (including action timeout setup down there) https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idtimeout-minutes
+    steps:
+      - uses: actions/checkout@v1 # Get last commit pushed - See https://github.com/actions/checkout
+
+      # Restore variables stored by previous jobs
+      - name: Restore variables
+        uses: UnlyEd/github-action-store-variable@v2.1.1 # See https://github.com/UnlyEd/github-action-store-variable
+        id: restore-variable
+        with:
+          failIfNotFound: true
+          variables: |
+            VERCEL_DEPLOYMENT_DOMAIN
+
+      # Wait for deployment to be ready, before running E2E (otherwise Cypress might start testing too early, and gets redirected to Vercel's "Login page", and tests fail)
+      - name: Awaiting Vercel deployment to be ready
+        uses: UnlyEd/github-action-await-vercel@v1.2.14 # See https://github.com/UnlyEd/github-action-await-vercel
+        id: await-vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        with:
+          deployment-url: ${{ env.VERCEL_DEPLOYMENT_DOMAIN }} # Must only contain the domain name (no http prefix, etc.)
+          timeout: 90 # Wait for 90 seconds before failing
+
+      - name: Display deployment status
+        run: "echo The deployment is ${{ env.readyState }}"
+
+  # Send a HTTP call to the webhook url that's provided in the customer configuration file (vercel.*.json)
+  send-webhook-callback-once-deployment-ready:
+    name: Invoke webhook callback url defined by the customer (Ubuntu 18.04)
+    runs-on: ubuntu-18.04
+    needs: await-for-vercel-deployment
+    timeout-minutes: 5 # Limit current job timeout https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idtimeout-minutes
+    steps:
+      - uses: actions/checkout@v1 # Get last commit pushed - See https://github.com/actions/checkout
+      - name: Expose GitHub slug/short variables # See https://github.com/rlespinasse/github-slug-action#exposed-github-environment-variables
+        uses: rlespinasse/github-slug-action@v3.x # See https://github.com/rlespinasse/github-slug-action
+
+      # Restore variables stored by previous jobs
+      - name: Restore variables
+        uses: UnlyEd/github-action-store-variable@v2.1.1 # See https://github.com/UnlyEd/github-action-store-variable
+        id: restore-variable
+        with:
+          failIfNotFound: true
+          variables: |
+            MANUAL_TRIGGER_CUSTOMER
+            CUSTOMER_REF_TO_DEPLOY
+
+      - name: Expose git environment variables and call webhook (if provided)
+        run: |
+          VERCEL_DEPLOYMENT_COMPLETED_WEBHOOK=$(cat vercel.$CUSTOMER_REF_TO_DEPLOY.${{ env.STAGE }}.json | jq --raw-output '.build.env.VERCEL_DEPLOYMENT_COMPLETED_WEBHOOK')
+          echo "Vercel deployment webhook url: " $VERCEL_DEPLOYMENT_COMPLETED_WEBHOOK
+
+          # Checking if a webhook url is defined
+          if [ -n "$VERCEL_DEPLOYMENT_COMPLETED_WEBHOOK" ]; then
+            # Run script that populates git-related variables as ENV variables
+            echo "Running script generate-post-data"
+            . ./scripts/generate-post-data.sh
+
+            echo "Print generate_post_data():"
+            echo "$(generate_post_data)"
+
+            echo "Calling webhook at '$VERCEL_DEPLOYMENT_COMPLETED_WEBHOOK'"
+            echo "Sending HTTP request (curl):"
+            curl POST \
+              "$VERCEL_DEPLOYMENT_COMPLETED_WEBHOOK" \
+              -vs \
+              --header "Accept: application/json" \
+              --header "Content-type: application/json" \
+              --data "$(generate_post_data)" \
+              2>&1 | sed '/^* /d; /bytes data]$/d; s/> //; s/< //'
+
+            # XXX See https://stackoverflow.com/a/54225157/2391795
+            # -vs - add headers (-v) but remove progress bar (-s)
+            # 2>&1 - combine stdout and stderr into single stdout
+            # sed - edit response produced by curl using the commands below
+            #   /^* /d - remove lines starting with '* ' (technical info)
+            #   /bytes data]$/d - remove lines ending with 'bytes data]' (technical info)
+            #   s/> // - remove '> ' prefix
+            #   s/< // - remove '< ' prefix
+
+          else
+            echo "No webhook url defined in 'vercel.$CUSTOMER_REF_TO_DEPLOY.${{ env.STAGE }}.json:.build.env.VERCEL_DEPLOYMENT_COMPLETED_WEBHOOK' (found '$VERCEL_DEPLOYMENT_COMPLETED_WEBHOOK')"
+          fi
+        env:
+          GIT_COMMIT_REF: ${{ github.ref }}
+          GIT_COMMIT_SHA: ${{ github.sha }}
+          DEPLOYMENT_STAGE: ${{ env.STAGE }}
+          GITHUB_REF_SLUG: ${{ env.GITHUB_REF_SLUG }}
+          GITHUB_HEAD_REF_SLUG: ${{ env.GITHUB_HEAD_REF_SLUG }}
+          GITHUB_BASE_REF_SLUG: ${{ env.GITHUB_BASE_REF_SLUG }}
+          GITHUB_EVENT_REF_SLUG: ${{ env.GITHUB_EVENT_REF_SLUG }}
+          GITHUB_REPOSITORY_SLUG: ${{ env.GITHUB_REPOSITORY_SLUG }}
+          GITHUB_REF_SLUG_URL: ${{ env.GITHUB_REF_SLUG_URL }}
+          GITHUB_HEAD_REF_SLUG_URL: ${{ env.GITHUB_HEAD_REF_SLUG_URL }}
+          GITHUB_BASE_REF_SLUG_URL: ${{ env.GITHUB_BASE_REF_SLUG_URL }}
+          GITHUB_EVENT_REF_SLUG_URL: ${{ env.GITHUB_EVENT_REF_SLUG_URL }}
+          GITHUB_REPOSITORY_SLUG_URL: ${{ env.GITHUB_REPOSITORY_SLUG_URL }}
+          GITHUB_SHA_SHORT: ${{ env.GITHUB_SHA_SHORT }}
+
+  run-2e2-tests:
+    name: Run end to end (E2E) tests (Ubuntu 18.04)
+    runs-on: ubuntu-18.04
+    container: cypress/included:7.4.0
+    needs: await-for-vercel-deployment
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v1
+      - name: Restore variables
+        uses: UnlyEd/github-action-store-variable@v2.1.1
+        id: restore-variable
+        with:
+          failIfNotFound: true
+          variables: |
+            VERCEL_DEPLOYMENT_URL
+            GITHUB_PULL_REQUEST_ID
+            
+      - name: Run E2E tests (Cypress)
+        uses: cypress-io/github-action@v2
+        with:
+          config-file: 'cypress/config-customer-ci-cd.json'
+          config: baseUrl=${{ env.VERCEL_DEPLOYMENT_URL }}
+        env:
+          DEBUG: "cypress:server:util:process_profiler"
+
+      - name: Upload screenshots artifacts (E2E failure)
+        uses: actions/upload-artifact@v1
+        if: failure()
+        with:
+          name: screenshots
+          path: cypress/screenshots/
+
+      - name: Upload videos artifacts (E2E failure)
+        uses: actions/upload-artifact@v1
+        if: failure()
+        with:
+          name: videos
+          path: cypress/videos/
+
+      - name: Comment PR (E2E failure)
+        uses: peter-evans/create-or-update-comment@v1
+        if: env.GITHUB_PULL_REQUEST_ID && failure()
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ env.GITHUB_PULL_REQUEST_ID }}
+          body: |
+            :x:&nbsp; E2E tests **FAILED** for commit ${{ github.sha }} previously deployed at [${{ env.VERCEL_DEPLOYMENT_URL }}](${{ env.VERCEL_DEPLOYMENT_URL }})
+            Download artifacts (screenshots + videos) from [`checks`](https://github.com/UnlyEd/next-right-now/pull/${{ env.GITHUB_PULL_REQUEST_ID }}/checks) section
+
+      - name: Comment PR (E2E success)
+        uses: peter-evans/create-or-update-comment@v1
+        if: env.GITHUB_PULL_REQUEST_ID && success()
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ env.GITHUB_PULL_REQUEST_ID }}
+          body: |
+            :white_check_mark:&nbsp; E2E tests **SUCCESS** for commit ${{ github.sha }} previously deployed at [${{ env.VERCEL_DEPLOYMENT_URL }}](${{ env.VERCEL_DEPLOYMENT_URL }})
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  run-lighthouse-tests:
+    name: Run LightHouse checks (Ubuntu 18.04)
+    runs-on: ubuntu-18.04
+    needs: await-for-vercel-deployment
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v1
+      - name: Create temporary folder for artifacts storage
+        run: mkdir /tmp/lighthouse-artifacts
+
+      - name: Restore variables
+        uses: UnlyEd/github-action-store-variable@v2.1.1
+        id: restore-variable
+        with:
+          failIfNotFound: true
+          variables: VERCEL_DEPLOYMENT_URL
+
+      - name: Run Lighthouse
+        uses: foo-software/lighthouse-check-action@v2.0.5
+        id: lighthouseCheck
+        with:
+          accessToken: ${{ secrets.GITHUB_TOKEN }}
+          commentUrl: https://api.github.com/repos/UnlyEd/next-right-now/commits/${{ github.sha }}/comments
+          prCommentEnabled: true
+          prCommentSaveOld: true
+          outputDirectory: /tmp/lighthouse-artifacts
+          emulatedFormFactor: all
+          urls: ${{ env.VERCEL_DEPLOYMENT_URL }}, ${{ env.VERCEL_DEPLOYMENT_URL }}/en, ${{ env.VERCEL_DEPLOYMENT_URL }}/fr
+          locale: en
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v1
+        with:
+          name: Lighthouse reports
+          path: /tmp/lighthouse-artifacts
+
+      - name: Handle Lighthouse Check results
+        uses: foo-software/lighthouse-check-status-action@v1.0.1
+        with:
+          lighthouseCheckResults: ${{ steps.lighthouseCheck.outputs.lighthouseCheckResults }}
+          minAccessibilityScore: "50"
+          minBestPracticesScore: "50"
+          minPerformanceScore: "30"
+          minProgressiveWebAppScore: "50"
+          minSeoScore: "50"

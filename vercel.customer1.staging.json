@@ -1,0 +1,21 @@
+{
+    "version": 2,
+    "name": "nameless-c1",
+    "scope": "",
+    "env": {},
+    "build": {
+      "env": {
+        "NEXT_PUBLIC_APP_STAGE": "staging",
+        "NEXT_PUBLIC_CUSTOMER_REF": "customer1",
+        "GITHUB_DISPATCH_TOKEN": "",
+        "VERCEL_DEPLOYMENT_COMPLETED_WEBHOOK": ""
+  }
+    },
+    "alias": [
+      "nameless-staging.vercel.app"
+    ],
+    "regions": [
+      "cdg1"
+    ],
+    "public": false
+  }
