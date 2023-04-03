@@ -2,16 +2,20 @@ name: Deploy to Vercel (staging)
 
 on:
   pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
     branches:
-      - 'staging'
       - 'main'
     paths:
       - '.github/workflows/deploy-vercel-staging.yml'
       - 'cypress/**'
       - '!cypress/_examples/**'
       - '!cypress/integration-storybook/**'
-      - '!cypress/config-*.json' # Exclude all config files
-      - 'cypress/config-customer-ci-cd.json' # Force include CI/CD config file
+      - '!cypress/config-*.json'
+      - 'cypress/config-customer-ci-cd.json'
       - 'public/**'
       - 'scripts/populate-git-env.sh'
       - 'src/**'
