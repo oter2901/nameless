@@ -1,9 +1,8 @@
 name: Deploy to Vercel (staging)
 
 on:
-  pull_request:
+  push:
     branches:
-      - 'staging'
       - 'main'
     paths:
       - '.github/workflows/deploy-vercel-staging.yml'
@@ -29,7 +28,7 @@ on:
         required: true
 
 env:
-  STAGE: staging
+  STAGE: production
 
 jobs:
   setup-environment:
@@ -42,7 +41,7 @@ jobs:
           node-version: '16'
 
   start-staging-deployment:
-    name: Starts Vercel deployment (staging) (Ubuntu 18.04)
+    name: Starts Vercel deployment (production) (Ubuntu 18.04)
     runs-on: ubuntu-latest
     needs: setup-environment
     timeout-minutes: 40 
@@ -97,35 +96,7 @@ jobs:
           status: ${{ job.status }}
           deployment_id: ${{ steps.start-github-deployment.outputs.deployment_id }}
           env_url: ${{ steps.vercel-deployment.outputs.preview-url }}
-
-      - name: Finding Pull Request ID
-        uses: jwalton/gh-find-current-pr@v1
-        id: pr_id_finder
-        if: always()
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Comment PR (Deployment failure)
-        uses: peter-evans/create-or-update-comment@v1 # See https://github.com/peter-evans/create-or-update-comment
-        if: steps.pr_id_finder.outputs.number && failure()
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          issue-number: ${{ steps.pr_id_finder.outputs.number }}
-          body: |
-            :x:&nbsp; Deployment **FAILED**
-            Commit ${{ github.sha }} failed to deploy to [${{ steps.vercel-deployment.outputs.preview-url }}](${{ steps.vercel-deployment.outputs.preview-url }})
-            [click to see logs](https://github.com/oter2901/nameless/pull/${{ steps.pr_id_finder.outputs.number }}/checks)
-
-      - name: Comment PR (Deployment success)
-        uses: peter-evans/create-or-update-comment@v1
-        if: steps.pr_id_finder.outputs.number && success()
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          issue-number: ${{ steps.pr_id_finder.outputs.number }}
-          body: |
-            :white_check_mark:&nbsp; Deployment **SUCCESS**
-            Commit ${{ github.sha }} successfully deployed **Next.js app** :rocket: to [${{ steps.vercel-deployment.outputs.preview-url }}](${{ steps.vercel-deployment.outputs.preview-url }})
-
+          
       - name: Store variables for next jobs
         uses: UnlyEd/github-action-store-variable@v2.1.1 # See https://github.com/UnlyEd/github-action-store-variable
         with:
