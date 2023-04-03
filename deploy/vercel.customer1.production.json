@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "name": "nameless",
+  "env": {},
+  "build": {
+    "env": {
+      "NEXT_PUBLIC_APP_STAGE": "production",
+      "NEXT_PUBLIC_CUSTOMER_REF": "customer1"
+    }
+  },
+  "github": {
+    "enabled": false
+  },
+  "alias": ["nameless-production.vercel.app"],
+  "regions": ["cdg1"],
+  "public": false
+}
