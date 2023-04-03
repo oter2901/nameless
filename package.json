@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "vercel:build:env": "vercel --build-env GIT_COMMIT_TAGS=$GIT_COMMIT_TAGS --build-env GIT_COMMIT_REF=$GIT_COMMIT_REF --build-env GIT_COMMIT_SHA=$GIT_COMMIT_SHA --confirm --debug --force",
+    "vercel:deploy": ". ./scripts/populate-git-env.sh && yarn vercel:build:env",
+    "deploy:ci": "yarn vercel:deploy --local-config=./deploy/vercel.${CUSTOMER_REF}.&{STAGE}.json"
   },
   "dependencies": {
     "@types/node": "18.15.11",
