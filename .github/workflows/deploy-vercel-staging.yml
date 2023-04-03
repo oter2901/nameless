@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - 'staging'
+      - 'main'
     paths:
       - '.github/workflows/deploy-vercel-staging.yml'
       - 'cypress/**'
