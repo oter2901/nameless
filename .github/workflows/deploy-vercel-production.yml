@@ -32,7 +32,7 @@ env:
 
 jobs:
   setup-environment:
-    name: Setup deployment environment (Ubuntu 18.04 - Node 16.x)
+    name: Setup deployment environment (Node 16.x)
     runs-on: ubuntu-latest
     steps:
       - name: Setup Node.js 16.x
@@ -41,7 +41,7 @@ jobs:
           node-version: '16'
 
   start-staging-deployment:
-    name: Starts Vercel deployment (production) (Ubuntu 18.04)
+    name: Starts Vercel deployment (production)
     runs-on: ubuntu-latest
     needs: setup-environment
     timeout-minutes: 40 
@@ -51,30 +51,12 @@ jobs:
       - name: Expose GitHub slug/short variables
         uses: rlespinasse/github-slug-action@v3.x
 
-      - name: Resolve customer to deploy
-        run: |
-          MANUAL_TRIGGER_CUSTOMER="${{github.event.inputs.customer}}"
-          echo "MANUAL_TRIGGER_CUSTOMER: " $MANUAL_TRIGGER_CUSTOMER
-          echo "MANUAL_TRIGGER_CUSTOMER=$MANUAL_TRIGGER_CUSTOMER" >> $GITHUB_ENV
-
-          CUSTOMER_REF_TO_DEPLOY="${MANUAL_TRIGGER_CUSTOMER:-$(cat vercel.json | jq --raw-output '.build.env.NEXT_PUBLIC_CUSTOMER_REF')}"
-          echo "Customer to deploy: " $CUSTOMER_REF_TO_DEPLOY
-          echo "CUSTOMER_REF_TO_DEPLOY=$CUSTOMER_REF_TO_DEPLOY" >> $GITHUB_ENV
-
-          if [[ ${GIT_COMMIT_REF##*/} =~ ^v[0-9]{1,}- ]]; then # Checking if pattern matches with "vX-" where X is a number
-            BRANCH_ALIAS_DOMAIN=${CUSTOMER_REF_TO_DEPLOY}-${{ env.GITHUB_REF_SLUG }}
-          else
-            BRANCH_ALIAS_DOMAIN=$(cat deploy/vercel.$CUSTOMER_REF_TO_DEPLOY.staging.json | jq --raw-output '.name')-${{ env.GITHUB_REF_SLUG }}
-          fi
-          echo "Resolved branch domain alias: " $BRANCH_ALIAS_DOMAIN
-          echo "BRANCH_ALIAS_DOMAIN=$BRANCH_ALIAS_DOMAIN" >> $GITHUB_ENV
-
       - name: Start GitHub deployment
         uses: bobheadxi/deployments@v1.4.0
         id: start-github-deployment
         with:
           step: start
-          env: ${{ env.CUSTOMER_REF_TO_DEPLOY }}-${{ env.STAGE }}
+          env: ${{ env.STAGE }}
           override: false
 
       - uses: amondnet/vercel-action@v20
@@ -92,7 +74,7 @@ jobs:
         if: always()
         with:
           step: finish
-          env: ${{ env.CUSTOMER_REF_TO_DEPLOY }}-${{ env.STAGE }}
+          env: ${{ env.STAGE }}
           token: ${{ secrets.GITHUB_TOKEN }}
           status: ${{ job.status }}
           deployment_id: ${{ steps.start-github-deployment.outputs.deployment_id }}
