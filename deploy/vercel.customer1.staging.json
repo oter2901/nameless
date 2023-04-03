@@ -11,7 +11,7 @@
   "github": {
     "enabled": false
   },
-  "alias": ["nameless-staging.vercel.app"],
+  "alias": [],
   "regions": ["cdg1"],
   "public": false
 }
